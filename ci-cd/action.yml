@@ -98,8 +98,7 @@ runs:
           VERSION=dev
           IS_RELEASE=false
         fi
-        echo 'release-version=$VERSION' >> $GITHUB_OUTPUT
-        echo 'is-release=$IS_RELEASE' >> $GITHUB_OUTPUT
+        echo 'release-version=$VERSION;is-release=$IS_RELEASE' >> $GITHUB_OUTPUT
         echo "VERSION=$VERSION;IS_RELEASE=$IS_RELEASE" >> $GITHUB_ENV
     - name: Build and push Docker
       if: ${{ inputs.docker-publish-mode != 'none' }}
