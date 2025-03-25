@@ -130,7 +130,7 @@ jobs:
             
             echo "Tags: $TAGS"
 
-            dotnet publish ${{ inputs.docker-publish-project }} /t:MultiArchPublish -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=registry.hub.docker.com
+            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=registry.hub.docker.com
           fi
 
           if [[ $DOCKER_PUBLISH_MODE == *"chiseled"* ]]; then
@@ -146,5 +146,5 @@ jobs:
             echo "Tags: $TAGS"
             echo "BASE_IMAGE: $BASE_IMAGE"
 
-            dotnet publish ${{ inputs.docker-publish-project }} /t:MultiArchPublish -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=registry.hub.docker.com
+            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=registry.hub.docker.com
           fi
