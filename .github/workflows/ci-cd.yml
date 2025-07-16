@@ -85,6 +85,8 @@ jobs:
         run: dotnet test --no-build /p:CollectCoverage=true /p:CoverletOutputFormat=opencover --filter 'TestCategory=Unit|TestCategory=Integration' ${{ inputs.dotnet-test-additional-params-unit-integration-tests }}
       - name: End Sonar scan for .NET
         run: dotnet tool run dotnet-sonarscanner end /d:sonar.token=${{ secrets.sonar-token }}
+      - name: Run .NET performance tests
+        run: dotnet test --no-build --filter 'TestCategory=Performance'
       - name: Run .NET system tests
         run: dotnet test --no-build --filter 'TestCategory=System'
       - name: Determine release information
