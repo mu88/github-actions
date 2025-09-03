@@ -64,10 +64,10 @@ jobs:
           fi
 
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
 
       - name: Set up JDK
         uses: actions/setup-java@v5
