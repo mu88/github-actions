@@ -92,7 +92,13 @@ jobs:
       - name: Restore NuGet dependencies
         run: dotnet restore
 
-      - name: Begin Sonar scan for .NET
+      - name: Restore SonarQube packages from cache
+        uses: actions/cache@v4
+        with:
+          key: sonar-${{ runner.os }}
+          path: ~/.sonar/cache
+
+      - name: Begin SonarQube scan for .NET
         env:
           ENV_SONAR_TOKEN: ${{ secrets.sonar-token }}
         run: dotnet tool run dotnet-sonarscanner begin /k:${{ inputs.sonar-key }} /o:mu88 /d:sonar.token=${{ env.ENV_SONAR_TOKEN }} ${{ inputs.sonar-additional-params }}
@@ -103,7 +109,7 @@ jobs:
       - name: Run .NET unit and integration tests and collect coverage
         run: dotnet test --no-build /p:CollectCoverage=true /p:CoverletOutputFormat=opencover --filter 'TestCategory=Unit|TestCategory=Integration' ${{ inputs.dotnet-test-additional-params-unit-integration-tests }}
 
-      - name: End Sonar scan for .NET
+      - name: End SonarQube scan for .NET
         env:
           ENV_SONAR_TOKEN: ${{ secrets.sonar-token }}
         run: dotnet tool run dotnet-sonarscanner end /d:sonar.token=${{ env.ENV_SONAR_TOKEN }}
