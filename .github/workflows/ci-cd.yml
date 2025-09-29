@@ -47,6 +47,9 @@ on:
         description: 'Whether this is a release (i.e. with a Git tag) or not'
         value: ${{ jobs.ci_cd.outputs.is-release }}
 
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
 jobs:
   ci_cd:
     runs-on: ubuntu-latest
