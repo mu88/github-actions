@@ -34,10 +34,6 @@ on:
       sonar-token:
         description: 'The Sonar token'
         required: true
-      docker-username:
-        description: 'The Docker Hub username'
-      docker-token:
-        description: 'The token to access Docker Hub'
 
     outputs:
       release-version:
@@ -78,13 +74,13 @@ jobs:
           java-version: 21
           distribution: microsoft
 
-      - name: Login to DockerHub
+      - name: Login to Container registry
         if: inputs.requires-docker-login == true
         uses: docker/login-action@v3
         with:
-          registry: registry.hub.docker.com
-          username: ${{ secrets.docker-username }}
-          password: ${{ secrets.docker-token }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Restore .NET tools
         run: dotnet tool restore
@@ -164,7 +160,7 @@ jobs:
             
             echo "Tags: $TAGS"
 
-            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=registry.hub.docker.com
+            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=ghcr.io
           fi
 
           if [[ $DOCKER_PUBLISH_MODE == *"chiseled"* ]]; then
@@ -180,5 +176,5 @@ jobs:
             echo "Tags: $TAGS"
             echo "BASE_IMAGE: $BASE_IMAGE"
 
-            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=registry.hub.docker.com
+            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=ghcr.io
           fi
