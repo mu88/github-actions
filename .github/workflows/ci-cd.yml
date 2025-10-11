@@ -160,7 +160,7 @@ jobs:
             
             echo "Tags: $TAGS"
 
-            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=ghcr.io
+            dotnet publish ${{ inputs.docker-publish-project }} --no-restore /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=ghcr.io
           fi
 
           if [[ $DOCKER_PUBLISH_MODE == *"chiseled"* ]]; then
@@ -176,5 +176,5 @@ jobs:
             echo "Tags: $TAGS"
             echo "BASE_IMAGE: $BASE_IMAGE"
 
-            dotnet publish ${{ inputs.docker-publish-project }} /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=ghcr.io
+            dotnet publish ${{ inputs.docker-publish-project }} --no-restore /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=ghcr.io
           fi
