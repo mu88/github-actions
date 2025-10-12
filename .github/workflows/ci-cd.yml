@@ -4,31 +4,31 @@ on:
   workflow_call:
     inputs:
       github-ref-name:
-        description: 'The GitHub ref'
-        required: true
+        description: 'The GitHub ref to detect whether this is a release or not (i.e. a Git tag)'
         type: string
+        required: true
       sonar-key:
         description: 'The key of the Sonar project to analyze'
-        required: true
         type: string
-      sonar-additional-params:
-        description: 'Any additional parameters for the .NET Sonar scan'
-        type: string
-        default: '/d:sonar.cs.opencover.reportsPaths=Tests/coverage.opencover.xml /s:$GITHUB_WORKSPACE/SonarQube.Analysis.xml'
-      dotnet-test-additional-params-unit-integration-tests:
-        description: 'Any additional parameters for the .NET unit and integration test run'
-        type: string
+        required: true        
       docker-publish-mode:
         description: 'Whether to publish chiseled Docker images'
         type: string
+        required: false
         default: none
       docker-publish-project:
         description: 'The .NET project path to publish via .NET SDK Container Building Tools'
         type: string
-      requires-docker-login:
-        description: 'Whether this workflow must access Docker'
-        type: boolean
-        default: false
+        required: false
+      dotnet-test-additional-params-unit-integration-tests:
+        description: 'Any additional parameters for the .NET unit and integration test run'
+        type: string
+        required: false        
+      sonar-additional-params:
+        description: 'Any additional parameters for the .NET Sonar scan'
+        type: string
+        required: false        
+        default: '/d:sonar.cs.opencover.reportsPaths=Tests/coverage.opencover.xml /s:$GITHUB_WORKSPACE/SonarQube.Analysis.xml'
 
     secrets:
       sonar-token:
@@ -57,8 +57,8 @@ jobs:
     steps:
       - name: Validate input
         run: |
-          DOCKER_PUBLISH_MODE=${{ inputs.docker-publish-mode }}
-          if [[ $DOCKER_PUBLISH_MODE != "none" && $DOCKER_PUBLISH_MODE != "regular" && $DOCKER_PUBLISH_MODE != "regular_and_chiseled" && $DOCKER_PUBLISH_MODE != "regular_and_chiseled_extra" && $DOCKER_PUBLISH_MODE != "chiseled" && $DOCKER_PUBLISH_MODE != "chiseled_extra" ]]; then
+          docker_publish_mode=${{ inputs.docker-publish-mode }}
+          if [[ $docker_publish_mode != "none" && $docker_publish_mode != "regular" && $docker_publish_mode != "regular_and_chiseled" && $docker_publish_mode != "regular_and_chiseled_extra" && $docker_publish_mode != "chiseled" && $docker_publish_mode != "chiseled_extra" ]]; then
             exit 1
           fi
 
@@ -67,15 +67,17 @@ jobs:
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
 
       - name: Set up JDK
         uses: actions/setup-java@v5
         with:
-          java-version: 21
           distribution: microsoft
+          java-version: 21
 
       - name: Login to Container registry
-        if: inputs.requires-docker-login == true
+        if: inputs.docker-publish-mode != 'none'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -103,7 +105,13 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Run .NET unit and integration tests and collect coverage
-        run: dotnet test --no-build /p:CollectCoverage=true /p:CoverletOutputFormat=opencover --filter 'TestCategory=Unit|TestCategory=Integration' ${{ inputs.dotnet-test-additional-params-unit-integration-tests }}
+        run: |
+          dotnet test \
+            --no-build \
+            --filter 'TestCategory=Unit|TestCategory=Integration' \
+            /p:CollectCoverage=true \
+            /p:CoverletOutputFormat=opencover \
+            ${{ inputs.dotnet-test-additional-params-unit-integration-tests }}
 
       - name: End SonarQube scan for .NET
         env:
@@ -120,61 +128,70 @@ jobs:
         id: determine-release-information
         run: |
           if [[ '${{ inputs.github-ref-name }}' =~ ^refs\/tags\/v?(.*)$ ]]; then
-            VERSION=${BASH_REMATCH[1]}
-            IS_RELEASE=true
+            version=${BASH_REMATCH[1]}
+            is_release=true
           else
-            VERSION=dev
-            IS_RELEASE=false
+            version=dev
+            is_release=false
           fi
 
-          echo "release_version=$VERSION" >> $GITHUB_OUTPUT
-          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+          echo "release_version=$version" >> $GITHUB_OUTPUT
+          echo "is_release=$is_release" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker
         if: ${{ inputs.docker-publish-mode != 'none' }}
         run: |
-          IS_RELEASE=${{ steps.determine-release-information.outputs.is_release }}
-          VERSION=${{ steps.determine-release-information.outputs.release_version }}
-          DOCKER_PUBLISH_MODE=${{ inputs.docker-publish-mode }}
+          is_release=${{ steps.determine-release-information.outputs.is_release }}
+          version=${{ steps.determine-release-information.outputs.release_version }}
+          docker_publish_mode=${{ inputs.docker-publish-mode }}
 
-          if [[ $DOCKER_PUBLISH_MODE == *"chiseled"* ]]; then
-            CHISELED_SUFFX="-chiseled"
-            CONTAINER_FAMILY="-noble-chiseled"
-            if [[ $DOCKER_PUBLISH_MODE == *"extra"* ]]; then
-              CONTAINER_FAMILY="$CONTAINER_FAMILY-extra"
+          if [[ $docker_publish_mode == *"chiseled"* ]]; then
+            chiseled_suffix="-chiseled"
+            container_family="-noble-chiseled"
+            if [[ $docker_publish_mode == *"extra"* ]]; then
+              container_family="$container_family-extra"
             fi
           else
-            CHISELED_SUFFX=""
-            CONTAINER_FAMILY=""
+            chiseled_suffix=""
+            container_family=""
           fi
 
-          echo "CHISELED_SUFFX: $CHISELED_SUFFX"
-          echo "Container family: $CONTAINER_FAMILY"
+          echo "chiseled_suffix: $chiseled_suffix"
+          echo "Container family: $container_family"
 
-          if [[ $DOCKER_PUBLISH_MODE == *"regular"* ]]; then
-            if [[ $IS_RELEASE == true ]]; then
-              TAGS="$VERSION;latest"
+          if [[ $docker_publish_mode == *"regular"* ]]; then
+            if [[ $is_release == true ]]; then
+              tags="$version;latest"
             else
-              TAGS="$VERSION"
+              tags="$version"
             fi
             
-            echo "Tags: $TAGS"
+            echo "tags: $tags"
 
-            dotnet publish ${{ inputs.docker-publish-project }} --no-restore /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerRegistry=ghcr.io
+            dotnet publish ${{ inputs.docker-publish-project }} \
+              --no-restore \
+              /t:PublishContainer \
+              /p:ContainerImageTags=\"$tags\" \
+              /p:ContainerRegistry=ghcr.io
           fi
 
-          if [[ $DOCKER_PUBLISH_MODE == *"chiseled"* ]]; then
-            CURRENT_BASE_IMAGE=$(dotnet msbuild ${{ inputs.docker-publish-project }} -getProperty:ContainerBaseImage)
-            BASE_IMAGE="$CURRENT_BASE_IMAGE$CONTAINER_FAMILY"
+          if [[ $docker_publish_mode == *"chiseled"* ]]; then
+            current_base_image=$(dotnet msbuild ${{ inputs.docker-publish-project }} -getProperty:ContainerBaseImage)
+            base_image="$current_base_image$container_family"
 
-            if [[ $IS_RELEASE == true ]]; then
-              TAGS="$VERSION$CHISELED_SUFFX;latest$CHISELED_SUFFX"
+            if [[ $is_release == true ]]; then
+              tags="$version$chiseled_suffix;latest$chiseled_suffix"
             else
-              TAGS="$VERSION$CHISELED_SUFFX"
+              tags="$version$chiseled_suffix"
             fi
 
-            echo "Tags: $TAGS"
-            echo "BASE_IMAGE: $BASE_IMAGE"
+            echo "tags: $tags"
+            echo "base_image: $base_image"
 
-            dotnet publish ${{ inputs.docker-publish-project }} --no-restore /t:PublishContainer -p:ContainerImageTags=\"$TAGS\" -p:ContainerBaseImage=\"$BASE_IMAGE\" -p:ContainerRegistry=ghcr.io
+            dotnet publish ${{ inputs.docker-publish-project }} \
+              --no-restore \
+              /t:PublishContainer \
+              /p:ContainerImageTags=\"$tags\" \
+              /p:ContainerBaseImage=\"$base_image\" \
+              /p:ContainerRegistry=ghcr.io
           fi
