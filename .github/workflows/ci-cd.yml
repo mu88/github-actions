@@ -10,7 +10,7 @@ on:
       sonar-key:
         description: 'The key of the Sonar project to analyze'
         type: string
-        required: true        
+        required: true
       docker-publish-mode:
         description: 'Whether to publish chiseled Docker images'
         type: string
@@ -23,11 +23,15 @@ on:
       dotnet-test-additional-params-unit-integration-tests:
         description: 'Any additional parameters for the .NET unit and integration test run'
         type: string
-        required: false        
+        required: false
+      requires-docker-login:
+        description: 'Whether this workflow must access Docker'
+        type: boolean
+        default: false
       sonar-additional-params:
         description: 'Any additional parameters for the .NET Sonar scan'
         type: string
-        required: false        
+        required: false
         default: '/d:sonar.cs.opencover.reportsPaths=Tests/coverage.opencover.xml /s:$GITHUB_WORKSPACE/SonarQube.Analysis.xml'
 
     secrets:
@@ -37,7 +41,7 @@ on:
 
     outputs:
       is-release:
-        description: 'Whether this is a release (i.e. with a Git tag) or not'
+        description: 'Whether this is a release (i.e. a Git commit starting with "chore(release)") or not'
         value: ${{ jobs.ci_cd.outputs.is-release }}
       release-version:
         description: 'The release version'
@@ -84,7 +88,7 @@ jobs:
           java-version: 21
 
       - name: Login to Container registry
-        if: inputs.docker-publish-mode != 'none'
+        if: inputs.docker-publish-mode != 'none' || inputs.requires-docker-login == true
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
