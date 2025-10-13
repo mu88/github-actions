@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       github-ref-name:
-        description: 'The GitHub ref to detect whether this is a release or not (i.e. a Git tag)'
+        description: 'The GitHub ref to detect whether this is a release or not (i.e. a Git commit starting with "chore(release)")'
         type: string
         required: true
       sonar-key:
@@ -36,12 +36,12 @@ on:
         required: true
 
     outputs:
-      release-version:
-        description: 'The release version'
-        value: ${{ jobs.ci_cd.outputs.release-version }}
       is-release:
         description: 'Whether this is a release (i.e. with a Git tag) or not'
         value: ${{ jobs.ci_cd.outputs.is-release }}
+      release-version:
+        description: 'The release version'
+        value: ${{ jobs.ci_cd.outputs.release-version }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -58,7 +58,12 @@ jobs:
       - name: Validate input
         run: |
           docker_publish_mode=${{ inputs.docker-publish-mode }}
-          if [[ $docker_publish_mode != "none" && $docker_publish_mode != "regular" && $docker_publish_mode != "regular_and_chiseled" && $docker_publish_mode != "regular_and_chiseled_extra" && $docker_publish_mode != "chiseled" && $docker_publish_mode != "chiseled_extra" ]]; then
+          if [[ $docker_publish_mode != "none" \
+                && $docker_publish_mode != "regular" \
+                && $docker_publish_mode != "regular_and_chiseled" \
+                && $docker_publish_mode != "regular_and_chiseled_extra" \
+                && $docker_publish_mode != "chiseled" \
+                && $docker_publish_mode != "chiseled_extra" ]]; then
             exit 1
           fi
 
@@ -129,7 +134,7 @@ jobs:
       - name: Determine release information
         id: determine-release-information
         run: |
-          if [[ '${{ inputs.github-ref-name }}' =~ ^refs\/tags\/v?(.*)$ ]]; then
+          if [[ '${{ inputs.github-ref-name }}' =~ ^chore\(release\):\s*(.*) ]]; then
             version=${BASH_REMATCH[1]}
             is_release=true
           else
