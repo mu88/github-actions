@@ -3,10 +3,6 @@ name: 'reusable CI/CD workflow'
 on:
   workflow_call:
     inputs:
-      github-ref-name:
-        description: 'The GitHub ref to detect whether this is a release or not (i.e. a Git commit starting with "chore(release)")'
-        type: string
-        required: true
       sonar-key:
         description: 'The key of the Sonar project to analyze'
         type: string
@@ -228,7 +224,7 @@ jobs:
       - name: Determine release information
         id: determine-release-information
         run: |
-          if [[ '${{ inputs.github-ref-name }}' =~ ^chore\(release\):\s*(.*) ]]; then
+          if [[ '${{ github.event.head_commit.message }}' =~ ^chore\(release\):\s*(.*) ]]; then
             version=${BASH_REMATCH[1]}
             is_release=true
           else
