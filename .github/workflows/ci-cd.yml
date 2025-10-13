@@ -88,7 +88,7 @@ jobs:
         run: dotnet tool restore
 
       - name: Restore NuGet dependencies
-        run: dotnet restore --locked-mode
+        run: dotnet restore
 
       - name: Restore SonarQube packages from cache
         uses: actions/cache@v4
