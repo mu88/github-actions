@@ -186,7 +186,12 @@ jobs:
       - name: Determine release information
         id: determine-release-information
         run: |
-          if [[ '${{ github.event.head_commit.message }}' =~ ^chore\(release\):\s*(.*) ]]; then
+          if [[ "${{ github.event.head_commit.message }}" =~ ^chore\(release\):\s*(.*) ]]; then
+            if [[ "${{ github.ref_name }}" != "${{ github.event.repository.default_branch }}" ]]; then
+              echo "Releases must be created on the default branch only."
+              exit 1
+            fi
+
             version=${BASH_REMATCH[1]}
             is_release=true
           else
