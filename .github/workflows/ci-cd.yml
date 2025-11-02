@@ -16,6 +16,11 @@ on:
         description: 'The .NET project path to publish via .NET SDK Container Building Tools'
         type: string
         required: false
+      dotnet-cache-dependencies-via-lock-file:
+        description: 'Whether to cache .NET dependencies using the packages.lock.json file'
+        type: boolean
+        required: false
+        default: true
       dotnet-test-additional-params-unit-integration-tests:
         description: 'Any additional parameters for the .NET unit and integration test run'
         type: string
@@ -23,6 +28,7 @@ on:
       requires-docker-login:
         description: 'Whether this workflow must access Docker'
         type: boolean
+        required: false
         default: false
       sonar-additional-params:
         description: 'Any additional parameters for the .NET Sonar scan'
@@ -47,9 +53,29 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 jobs:
-  unit_integration_tests_and_sonar:
-    name: '.NET Unit / Integration Tests and SonarQube'
+  validate_input:
+    name: 'Validate input parameters'
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate docker-publish-mode input
+        run: |
+          docker_publish_mode=${{ inputs.docker-publish-mode }}
+          if [[ $docker_publish_mode != "none" \
+                && $docker_publish_mode != "regular" \
+                && $docker_publish_mode != "regular_and_chiseled" \
+                && $docker_publish_mode != "regular_and_chiseled_extra" \
+                && $docker_publish_mode != "chiseled" \
+                && $docker_publish_mode != "chiseled_extra" ]]; then
+            echo "Invalid docker-publish-mode: $docker_publish_mode"
+            exit 1
+          fi
+
+  unit_integration_tests_and_sonar:
+    name: '.NET Unit & Integration Tests and SonarQube'
+    runs-on: ubuntu-latest
+
+    needs: validate_input
 
     steps:
       - name: Check out code
@@ -58,7 +84,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
         with:
-          cache: true
+          cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
           cache-dependency-path: "**/packages.lock.json"
           global-json-file: global.json
 
@@ -114,6 +140,8 @@ jobs:
     name: '.NET Performance Tests'
     runs-on: ubuntu-latest
 
+    needs: validate_input
+
     steps:
       - name: Check out code
         uses: actions/checkout@v5
@@ -121,7 +149,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
         with:
-          cache: true
+          cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
           cache-dependency-path: "**/packages.lock.json"
           global-json-file: global.json
 
@@ -146,6 +174,8 @@ jobs:
     name: '.NET System Tests'
     runs-on: ubuntu-latest
 
+    needs: validate_input
+
     steps:
       - name: Check out code
         uses: actions/checkout@v5
@@ -153,7 +183,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
         with:
-          cache: true
+          cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
           cache-dependency-path: "**/packages.lock.json"
           global-json-file: global.json
 
@@ -177,6 +207,8 @@ jobs:
   determine-release-information:
     name: 'Determine release information'
     runs-on: ubuntu-latest
+
+    needs: validate_input
     
     outputs:
       is_release: ${{ steps.determine-release-information.outputs.is_release }}
@@ -206,28 +238,19 @@ jobs:
     name: 'Build and push Docker images'
     runs-on: ubuntu-latest
     if: inputs.docker-publish-mode != 'none'
-    needs: determine-release-information
+
+    needs:
+      - determine-release-information
+      - validate_input
 
     steps:
-      - name: Validate input
-        run: |
-          docker_publish_mode=${{ inputs.docker-publish-mode }}
-          if [[ $docker_publish_mode != "none" \
-                && $docker_publish_mode != "regular" \
-                && $docker_publish_mode != "regular_and_chiseled" \
-                && $docker_publish_mode != "regular_and_chiseled_extra" \
-                && $docker_publish_mode != "chiseled" \
-                && $docker_publish_mode != "chiseled_extra" ]]; then
-            exit 1
-          fi
-
       - name: Check out code
         uses: actions/checkout@v5
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
         with:
-          cache: true
+          cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
           cache-dependency-path: "**/packages.lock.json"
           global-json-file: global.json
 
