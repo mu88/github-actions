@@ -127,6 +127,7 @@ jobs:
           dotnet test \
             --no-build \
             --filter 'TestCategory=Unit|TestCategory=Integration' \
+            --logger trx \
             /p:CollectCoverage=true \
             /p:CoverletOutputFormat=opencover \
             ${{ inputs.dotnet-test-additional-params-unit-integration-tests }}
@@ -135,6 +136,14 @@ jobs:
         env:
           ENV_SONAR_TOKEN: ${{ secrets.sonar-token }}
         run: dotnet tool run dotnet-sonarscanner end /d:sonar.token=${{ env.ENV_SONAR_TOKEN }}
+
+      - name: Publish test report
+        uses: dorny/test-reporter@v2
+        if: ${{ !cancelled() }} 
+        with:
+          name: dotnet unit and integration tests
+          path: '**/*.trx'
+          reporter: dotnet-trx
 
   performance_tests:
     name: '.NET Performance Tests'
@@ -168,7 +177,15 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Run .NET performance tests
-        run: dotnet test --no-build --filter 'TestCategory=Performance'
+        run: dotnet test --no-build --filter 'TestCategory=Performance' --logger trx
+
+      - name: Publish test report
+        uses: dorny/test-reporter@v2
+        if: ${{ !cancelled() }} 
+        with:
+          name: dotnet performance tests
+          path: '**/*.trx'
+          reporter: dotnet-trx
 
   system_tests:
     name: '.NET System Tests'
@@ -202,7 +219,15 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Run .NET system tests
-        run: dotnet test --no-build --filter 'TestCategory=System'
+        run: dotnet test --no-build --filter 'TestCategory=System' --logger trx
+
+      - name: Publish test report
+        uses: dorny/test-reporter@v2
+        if: ${{ !cancelled() }} 
+        with:
+          name: dotnet system tests
+          path: '**/*.trx'
+          reporter: dotnet-trx
 
   determine-release-information:
     name: 'Determine release information'
