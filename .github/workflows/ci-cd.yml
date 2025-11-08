@@ -360,7 +360,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/Provenance/*
 
-      - name: Extract image digests
+      - name: Extract generated container image digests
         id: extract-digests
         shell: pwsh
         run: |
@@ -371,11 +371,17 @@ jobs:
 
           function Get-DigestsFromObject {
             param($obj)
-            if ($null -eq $obj) { return }
+
+            if ($null -eq $obj) {
+              return
+            }
 
             # If it's an enumerable (array/list) but not a string, iterate
             if ($obj -is [System.Collections.IEnumerable] -and -not ($obj -is [string])) {
-              foreach ($item in $obj) { Get-DigestsFromObject $item }
+              foreach ($item in $obj) {
+                Get-DigestsFromObject $item
+              }
+
               return
             }
 
@@ -383,11 +389,14 @@ jobs:
             if ($obj -is [psobject]) {
               foreach ($p in $obj.PSObject.Properties) {
                 if ($p.Name -eq 'digest') {
-                  if ($p.Value -ne $null) { $digests.Add([string]$p.Value) }
+                  if ($p.Value -ne $null) {
+                    $digests.Add([string]$p.Value)
+                  }
                 } else {
                   Get-DigestsFromObject $p.Value
                 }
               }
+
               return
             }
 
@@ -427,15 +436,26 @@ jobs:
           $uniq = New-Object System.Collections.Generic.List[string]
           $seen = [System.Collections.Generic.HashSet[string]]::new()
           foreach ($d in $digests) {
-            if ([string]::IsNullOrWhiteSpace($d)) { continue }
-            if (-not $seen.Contains($d)) { $null = $seen.Add($d); $uniq.Add($d) }
+            if ([string]::IsNullOrWhiteSpace($d)) {
+              continue
+            }
+
+            if (-not $seen.Contains($d)) {
+              $null = $seen.Add($d)
+              $uniq.Add($d)
+            }
           }
 
-          if ($uniq.Count -eq 0) { $json = '[]' } else { $json = ($uniq | ConvertTo-Json -Compress) }
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "digests=$json"
+          if ($uniq.Count -eq 0) {
+            $json = '[]'
+          } else {
+            $json = ($uniq | ConvertTo-Json -Compress)
+          }
+
+          Write-Output "digests=$json" >> $env:GITHUB_OUTPUT
 
   attest_provenance:
-    name: 'Print extracted image digests'
+    name: 'Attest container image build provenance'
     runs-on: ubuntu-latest
     if: inputs.docker-publish-mode != 'none'
 
@@ -446,7 +466,32 @@ jobs:
         digest: ${{ fromJson(needs.docker.outputs.digests) }}
 
     steps:
-      - name: Print digest
-        run: |
-          echo "Digest: ${{ matrix.digest }}"
+      - name: Check out code
+        uses: actions/checkout@v5
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
+          cache-dependency-path: "**/packages.lock.json"
+          global-json-file: global.json
+
+      - name: Login to Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image name
+        id: determine-image-name
+        run: |
+          image_name=$(dotnet msbuild ${{ inputs.docker-publish-project }} -getProperty:ContainerRepository)
+          echo "image_name=$image_name" >> $GITHUB_OUTPUT
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/${{ steps.determine-image-name.outputs.image_name }}
+          subject-digest: ${{ matrix.digest }}
+          push-to-registry: true
