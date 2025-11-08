@@ -291,6 +291,8 @@ jobs:
 
       - name: Build and push Docker
         run: |
+          mkdir -p ${{ runner.temp }}/Provenance
+
           is_release=${{ needs.determine-release-information.outputs.is_release }}
           version=${{ needs.determine-release-information.outputs.release_version }}
           docker_publish_mode=${{ inputs.docker-publish-mode }}
@@ -321,8 +323,10 @@ jobs:
             dotnet publish ${{ inputs.docker-publish-project }} \
               --no-restore \
               /t:PublishContainer \
+              -bl:${{ runner.temp }}/Provenance/regular.binlog \
               /p:ContainerImageTags=\"$tags\" \
-              /p:ContainerRegistry=ghcr.io
+              /p:ContainerRegistry=ghcr.io \
+              --getItem:GeneratedContainer --getProperty:GeneratedImageIndex >> ${{ runner.temp }}/Provenance/regular.json
           fi
 
           if [[ $docker_publish_mode == *"chiseled"* ]]; then
@@ -341,7 +345,14 @@ jobs:
             dotnet publish ${{ inputs.docker-publish-project }} \
               --no-restore \
               /t:PublishContainer \
+              -bl:${{ runner.temp }}/Provenance/chiseled.binlog \
               /p:ContainerImageTags=\"$tags\" \
               /p:ContainerBaseImage=\"$base_image\" \
-              /p:ContainerRegistry=ghcr.io
+              /p:ContainerRegistry=ghcr.io \
+              --getItem:GeneratedContainer --getProperty:GeneratedImageIndex >> ${{ runner.temp }}/Provenance/chiseled.json
           fi
+
+      - name: Upload Docker build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ runner.temp }}/Provenance/*
