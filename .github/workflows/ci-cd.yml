@@ -326,7 +326,6 @@ jobs:
             dotnet publish ${{ inputs.docker-publish-project }} \
               --no-restore \
               /t:PublishContainer \
-              -bl:${{ runner.temp }}/Provenance/regular.binlog \
               /p:ContainerImageTags=\"$tags\" \
               /p:ContainerRegistry=ghcr.io \
               --getItem:GeneratedContainer --getProperty:GeneratedImageIndex >> ${{ runner.temp }}/Provenance/regular.json
@@ -348,19 +347,13 @@ jobs:
             dotnet publish ${{ inputs.docker-publish-project }} \
               --no-restore \
               /t:PublishContainer \
-              -bl:${{ runner.temp }}/Provenance/chiseled.binlog \
               /p:ContainerImageTags=\"$tags\" \
               /p:ContainerBaseImage=\"$base_image\" \
               /p:ContainerRegistry=ghcr.io \
               --getItem:GeneratedContainer --getProperty:GeneratedImageIndex >> ${{ runner.temp }}/Provenance/chiseled.json
           fi
 
-      - name: Upload Docker build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          path: ${{ runner.temp }}/Provenance/*
-
-      - name: Extract generated container image digests
+      - name: Extract generated Docker image digests
         id: extract-digests
         shell: pwsh
         run: |
@@ -454,12 +447,14 @@ jobs:
 
           Write-Output "digests=$json" >> $env:GITHUB_OUTPUT
 
-  attest_provenance:
-    name: 'Attest container image build provenance'
+  attest_provenance_sbom:
+    name: 'Attest Docker image build provenance and SBOM'
     runs-on: ubuntu-latest
     if: inputs.docker-publish-mode != 'none'
 
-    needs: docker
+    needs:
+      - determine-release-information
+      - docker
 
     strategy:
       matrix:
@@ -483,7 +478,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine image name
+      - name: Determine Docker image name
         id: determine-image-name
         run: |
           image_name=$(dotnet msbuild ${{ inputs.docker-publish-project }} -getProperty:ContainerRepository)
@@ -492,6 +487,20 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v3
         with:
+          push-to-registry: true
           subject-name: ghcr.io/${{ steps.determine-image-name.outputs.image_name }}
           subject-digest: ${{ matrix.digest }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ steps.determine-image-name.outputs.image_name }}@${{ matrix.digest }}
+          output-file: sbom.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
           push-to-registry: true
+          sbom-path: sbom.json
+          subject-name: ghcr.io/${{ steps.determine-image-name.outputs.image_name }}
+          subject-digest: ${{ matrix.digest }}
