@@ -520,7 +520,7 @@ jobs:
           output-file: sbom.json
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v3
         with:
           push-to-registry: true
           sbom-path: sbom.json
