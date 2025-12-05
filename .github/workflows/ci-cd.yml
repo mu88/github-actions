@@ -378,6 +378,7 @@ jobs:
           echo "all_tags=$all_tags" >> $GITHUB_OUTPUT
 
       - name: Extract generated Docker image digests
+        if: inputs.docker-attest-provenance-and-sbom == true
         id: extract-digests
         shell: pwsh
         run: |
