@@ -7,6 +7,11 @@ on:
         description: 'The key of the Sonar project to analyze'
         type: string
         required: true
+      docker-attest-provenance-and-sbom:
+        description: 'Whether to attest Docker image build provenance and SBOM'
+        type: boolean
+        required: false
+        default: true
       docker-publish-mode:
         description: 'Whether to publish chiseled Docker images'
         type: string
@@ -488,7 +493,7 @@ jobs:
   attest_provenance_sbom:
     name: 'Attest Docker image build provenance and SBOM'
     runs-on: ubuntu-latest
-    if: inputs.docker-publish-mode != 'none'
+    if: inputs.docker-publish-mode != 'none' && inputs.docker-attest-provenance-and-sbom == true
 
     needs:
       - determine-release-information
