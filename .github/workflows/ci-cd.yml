@@ -12,11 +12,6 @@ on:
         type: boolean
         required: false
         default: true
-      docker-publish-mode:
-        description: 'Whether to publish chiseled Docker images'
-        type: string
-        required: false
-        default: none
       docker-publish-project:
         description: 'The .NET project path to publish via .NET SDK Container Building Tools'
         type: string
@@ -58,29 +53,26 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 jobs:
-  validate_input:
-    name: 'Validate input parameters'
+  determine_docker_publish_needed:
+    name: 'Determine whether Docker publish is needed'
     runs-on: ubuntu-latest
 
+    outputs:
+      docker-publish-needed: ${{ steps.determine-docker-publish-mode.outputs.docker-publish-needed }}
+
     steps:
-      - name: Validate docker-publish-mode input
+      - name: Determine Docker publish needed
+        id: determine-docker-publish-mode
         run: |
-          docker_publish_mode=${{ inputs.docker-publish-mode }}
-          if [[ $docker_publish_mode != "none" \
-                && $docker_publish_mode != "regular" \
-                && $docker_publish_mode != "regular_and_chiseled" \
-                && $docker_publish_mode != "regular_and_chiseled_extra" \
-                && $docker_publish_mode != "chiseled" \
-                && $docker_publish_mode != "chiseled_extra" ]]; then
-            echo "Invalid docker-publish-mode: $docker_publish_mode"
-            exit 1
+          if [ -z "${{ inputs.docker-publish-project }}" ]; then
+            echo "docker-publish-needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "docker-publish-needed=true" >> $GITHUB_OUTPUT
           fi
 
   unit_integration_tests_and_sonar:
     name: '.NET Unit & Integration Tests and SonarQube'
     runs-on: ubuntu-latest
-
-    needs: validate_input
 
     steps:
       - name: Check out code
@@ -100,7 +92,7 @@ jobs:
           java-version: 21
 
       - name: Login to Container registry
-        if: inputs.docker-publish-mode != 'none' || inputs.requires-docker-login == true
+        if: inputs.requires-docker-login == true
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -154,8 +146,6 @@ jobs:
     name: '.NET Performance Tests'
     runs-on: ubuntu-latest
 
-    needs: validate_input
-
     steps:
       - name: Check out code
         uses: actions/checkout@v5
@@ -168,7 +158,7 @@ jobs:
           global-json-file: global.json
 
       - name: Login to Container registry
-        if: inputs.docker-publish-mode != 'none' || inputs.requires-docker-login == true
+        if: inputs.requires-docker-login == true
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -196,8 +186,6 @@ jobs:
     name: '.NET System Tests'
     runs-on: ubuntu-latest
 
-    needs: validate_input
-
     steps:
       - name: Check out code
         uses: actions/checkout@v5
@@ -210,7 +198,7 @@ jobs:
           global-json-file: global.json
 
       - name: Login to Container registry
-        if: inputs.docker-publish-mode != 'none' || inputs.requires-docker-login == true
+        if: inputs.requires-docker-login == true
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -237,8 +225,6 @@ jobs:
   determine-release-information:
     name: 'Determine release information'
     runs-on: ubuntu-latest
-
-    needs: validate_input
     
     outputs:
       is_release: ${{ steps.determine-release-information.outputs.is_release }}
@@ -248,7 +234,7 @@ jobs:
       - name: Determine release information
         id: determine-release-information
         run: |
-          if [[ "${{ github.event.head_commit.message }}" =~ ^chore\(release\):\s*(.*) ]]; then
+          if [[ "${{ github.event.head_commit.message }}" =~ ^chore\(release\):[[:space:]]*(.*) ]]; then
             if [[ "${{ github.ref_name }}" != "${{ github.event.repository.default_branch }}" ]]; then
               echo "Releases must be created on the default branch only."
               exit 1
@@ -261,17 +247,18 @@ jobs:
             is_release=false
           fi
 
+          echo "release_version=$version"
           echo "release_version=$version" >> $GITHUB_OUTPUT
           echo "is_release=$is_release" >> $GITHUB_OUTPUT
 
   docker:
     name: 'Build and push Docker images'
     runs-on: ubuntu-latest
-    if: inputs.docker-publish-mode != 'none'
+    if: needs.determine_docker_publish_needed.outputs.docker-publish-needed == 'true'
 
     needs:
+      - determine_docker_publish_needed
       - determine-release-information
-      - validate_input
 
     outputs:
       digests: ${{ steps.extract-digests.outputs.digests }}
@@ -308,74 +295,11 @@ jobs:
         id: build-and-push-docker
         run: |
           mkdir -p ${{ runner.temp }}/Provenance
-
-          is_release=${{ needs.determine-release-information.outputs.is_release }}
-          version=${{ needs.determine-release-information.outputs.release_version }}
-          docker_publish_mode=${{ inputs.docker-publish-mode }}
-          all_tags=""
-
-          if [[ $docker_publish_mode == *"chiseled"* ]]; then
-            chiseled_suffix="-chiseled"
-            container_family="-noble-chiseled"
-            if [[ $docker_publish_mode == *"extra"* ]]; then
-              container_family="$container_family-extra"
-            fi
-          else
-            chiseled_suffix=""
-            container_family=""
-          fi
-
-          echo "chiseled_suffix: $chiseled_suffix"
-          echo "Container family: $container_family"
-
-          if [[ $docker_publish_mode == *"regular"* ]]; then
-            if [[ $is_release == true ]]; then
-              tags="$version;latest"
-            else
-              tags="$version"
-            fi
-            
-            echo "tags: $tags"
-
-            all_tags="$tags"
-
-            dotnet publish ${{ inputs.docker-publish-project }} \
-              --no-restore \
-              /t:PublishContainer \
-              /p:ContainerImageTags=\"$tags\" \
-              /p:ContainerRegistry=ghcr.io \
-              --getItem:GeneratedContainer --getProperty:GeneratedImageIndex >> ${{ runner.temp }}/Provenance/regular.json
-          fi
-
-          if [[ $docker_publish_mode == *"chiseled"* ]]; then
-            current_base_image=$(dotnet msbuild ${{ inputs.docker-publish-project }} -getProperty:ContainerBaseImage)
-            base_image="$current_base_image$container_family"
-
-            if [[ $is_release == true ]]; then
-              tags="$version$chiseled_suffix;latest$chiseled_suffix"
-            else
-              tags="$version$chiseled_suffix"
-            fi
-
-            echo "tags: $tags"
-            echo "base_image: $base_image"
-
-            if [[ -n "$all_tags" ]]; then
-              all_tags="$all_tags;$tags"
-            else
-              all_tags="$tags"
-            fi
-
-            dotnet publish ${{ inputs.docker-publish-project }} \
-              --no-restore \
-              /t:PublishContainer \
-              /p:ContainerImageTags=\"$tags\" \
-              /p:ContainerBaseImage=\"$base_image\" \
-              /p:ContainerRegistry=ghcr.io \
-              --getItem:GeneratedContainer --getProperty:GeneratedImageIndex >> ${{ runner.temp }}/Provenance/chiseled.json
-          fi
-
-          echo "all_tags=$all_tags" >> $GITHUB_OUTPUT
+          dotnet publish ${{ inputs.docker-publish-project }} \
+            --no-restore \
+            /t:PublishContainersForMultipleFamilies \
+            -p:ReleaseVersion=${{ needs.determine-release-information.outputs.release_version }} \
+            -p:IsRelease=${{ needs.determine-release-information.outputs.is_release }}
 
       - name: Extract generated Docker image digests
         if: inputs.docker-attest-provenance-and-sbom == true
@@ -494,9 +418,10 @@ jobs:
   attest_provenance_sbom:
     name: 'Attest Docker image build provenance and SBOM'
     runs-on: ubuntu-latest
-    if: inputs.docker-publish-mode != 'none' && inputs.docker-attest-provenance-and-sbom == true
+    if: inputs.docker-attest-provenance-and-sbom == true && needs.determine_docker_publish_needed.outputs.docker-publish-needed == 'true'
 
     needs:
+      - determine_docker_publish_needed
       - determine-release-information
       - docker
 
