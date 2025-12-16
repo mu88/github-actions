@@ -63,12 +63,13 @@ jobs:
     steps:
       - name: Determine Docker publish needed
         id: determine-docker-publish-mode
+        shell: pwsh
         run: |
-          if [ -z "${{ inputs.docker-publish-project }}" ]; then
-            echo "docker-publish-needed=false" >> $GITHUB_OUTPUT
-          else
-            echo "docker-publish-needed=true" >> $GITHUB_OUTPUT
-          fi
+          if ([string]::IsNullOrWhiteSpace("${{ inputs.docker-publish-project }}")) {
+            Write-Output "docker-publish-needed=false" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Output "docker-publish-needed=true" >> $env:GITHUB_OUTPUT
+          }
 
   unit_integration_tests_and_sonar:
     name: '.NET Unit & Integration Tests and SonarQube'
@@ -233,23 +234,28 @@ jobs:
     steps:
       - name: Determine release information
         id: determine-release-information
+        shell: pwsh
         run: |
-          if [[ "${{ github.event.head_commit.message }}" =~ ^chore\(release\):[[:space:]]*(.*) ]]; then
-            if [[ "${{ github.ref_name }}" != "${{ github.event.repository.default_branch }}" ]]; then
-              echo "Releases must be created on the default branch only."
+          $commitMsg = "${{ github.event.head_commit.message }}"
+          $defaultBranch = "${{ github.event.repository.default_branch }}"
+          $refName = "${{ github.ref_name }}"
+
+          $regex = '^chore\(release\):\s*(.*)'
+          $isRelease = $false
+          $version = 'dev'
+
+          if ($commitMsg -match $regex) {
+            if ($refName -ne $defaultBranch) {
+              Write-Host "Releases must be created on the default branch only."
               exit 1
-            fi
+            }
+            $version = $Matches[1]
+            $isRelease = $true
+          }
 
-            version=${BASH_REMATCH[1]}
-            is_release=true
-          else
-            version=dev
-            is_release=false
-          fi
-
-          echo "release_version=$version"
-          echo "release_version=$version" >> $GITHUB_OUTPUT
-          echo "is_release=$is_release" >> $GITHUB_OUTPUT
+          Write-Host "release_version=$version"
+          Write-Output "release_version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "is_release=$isRelease" >> $env:GITHUB_OUTPUT
 
   docker:
     name: 'Build and push Docker images'
