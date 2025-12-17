@@ -115,7 +115,13 @@ jobs:
       - name: Begin SonarQube scan for .NET
         env:
           ENV_SONAR_TOKEN: ${{ secrets.sonar-token }}
-        run: dotnet tool run dotnet-sonarscanner begin /k:${{ inputs.sonar-key }} /o:mu88 /d:sonar.token=${{ env.ENV_SONAR_TOKEN }} ${{ inputs.sonar-additional-params }}
+        run: |
+          dotnet tool run dotnet-sonarscanner \
+            begin \
+            /k:${{ inputs.sonar-key }} \
+            /o:mu88 \
+            /d:sonar.token=${{ env.ENV_SONAR_TOKEN }} \
+            ${{ inputs.sonar-additional-params }}
 
       - name: .NET Build
         run: dotnet build --no-restore
@@ -290,22 +296,40 @@ jobs:
 
       - name: Determine Docker image name
         id: determine-image-name
+        shell: pwsh
         run: |
-          image_name=$(dotnet msbuild ${{ inputs.docker-publish-project }} -getProperty:ContainerRepository)
-          echo "image_name=$image_name" >> $GITHUB_OUTPUT
+          $imageName = dotnet msbuild "${{ inputs.docker-publish-project }}" -getProperty:ContainerRepository
+          Write-Output "image_name=$imageName" >> $env:GITHUB_OUTPUT
 
       - name: Restore NuGet dependencies
         run: dotnet restore
 
+      - name: Get GitHub repository description
+        id: get-repo-description
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $repoDescription = gh repo view "${{ github.repository }}" --json description -q ".description"
+          if ([string]::IsNullOrWhiteSpace($repoDescription) -or $repoDescription -eq "null") {
+            $repoDescription = "No description configured for repository ${{ github.repository }}."
+          }
+          Write-Output "description=$repoDescription" >> $env:GITHUB_OUTPUT
+
       - name: Build and push Docker
         id: build-and-push-docker
+        # Use an environment variable for the description to ensure proper escaping and handling of special characters, newlines, or quotes.
+        # This avoids YAML and shell parsing issues that can occur with direct interpolation.
+        env:
+          REPO_DESCRIPTION: ${{ steps.get-repo-description.outputs.description }}
         run: |
-          mkdir -p ${{ runner.temp }}/Provenance
           dotnet publish ${{ inputs.docker-publish-project }} \
             --no-restore \
             /t:PublishContainersForMultipleFamilies \
             -p:ReleaseVersion=${{ needs.determine-release-information.outputs.release_version }} \
-            -p:IsRelease=${{ needs.determine-release-information.outputs.is_release }}
+            -p:IsRelease=${{ needs.determine-release-information.outputs.is_release }} \
+            -p:ContainerDescription="$REPO_DESCRIPTION" \
+            --getItem:GeneratedImages >> ${{ runner.temp }}/GeneratedImages.json
 
       - name: Extract generated Docker image digests
         if: inputs.docker-attest-provenance-and-sbom == true
@@ -315,79 +339,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
 
-          $allTags = '${{ steps.build-and-push-docker.outputs.all_tags }}'
-          $inputDirectory = '${{ runner.temp }}/Provenance/'
           $digests = New-Object System.Collections.Generic.List[string]
 
-          function Get-DigestsFromObject {
-            param($obj)
+          # Read the JSON file to get the list of generated images
+          $raw = Get-Content -Raw -Path "${{ runner.temp }}/GeneratedImages.json"
+          $msBuildOutput = ConvertFrom-Json $raw
 
-            if ($null -eq $obj) {
-              return
-            }
-
-            # If it's an enumerable (array/list) but not a string, iterate
-            if ($obj -is [System.Collections.IEnumerable] -and -not ($obj -is [string])) {
-              foreach ($item in $obj) {
-                Get-DigestsFromObject $item
-              }
-
-              return
-            }
-
-            # If it's a PSCustomObject / has properties, inspect properties
-            if ($obj -is [psobject]) {
-              foreach ($p in $obj.PSObject.Properties) {
-                if ($p.Name -eq 'digest') {
-                  if ($p.Value -ne $null) {
-                    $digests.Add([string]$p.Value)
-                  }
-                } else {
-                  Get-DigestsFromObject $p.Value
-                }
-              }
-
-              return
-            }
-
-            # If it's a string, it might be nested JSON (possibly with \uXXXX escapes)
-            if ($obj -is [string]) {
-              $s = $obj.Trim()
-              if ($s -match '\\u[0-9A-Fa-f]{4}' -or $s.StartsWith('{') -or $s.StartsWith('[')) {
-                # Convert Unicode escapes like \u0022 into characters
-                $unescaped = [regex]::Replace($s, '\\u([0-9A-Fa-f]{4})', { param($m) [char]([convert]::ToInt32($m.Groups[1].Value,16)) })
-
-                try {
-                  $inner = $unescaped | ConvertFrom-Json -ErrorAction Stop
-                  Get-DigestsFromObject $inner
-                } catch {
-                  # not valid JSON even after unescaping; ignore
-                }
-              }
-            }
-          }
-
-          $files = Get-ChildItem -Path $inputDirectory -Filter '*.json' -File | ForEach-Object { $_.FullName }
-          foreach ($f in $files) {
-            if (Test-Path $f) {
-              $raw = Get-Content -Raw -ErrorAction SilentlyContinue -Path $f
-              if ($null -ne $raw -and $raw.Trim().Length -gt 0) {
-                try {
-                  $root = $raw | ConvertFrom-Json -ErrorAction Stop
-                  Get-DigestsFromObject $root
-                } catch {
-                  # If the top-level file isn't valid JSON, skip
-                }
-              }
-            }
-          }
-
-
-          foreach ($tag in $allTags.split(';')) {
-            $imageName = '${{ steps.determine-image-name.outputs.image_name }}'
-            $fullImageRef = "ghcr.io/$($imageName):$tag"
-            docker pull $fullImageRef | Out-Null
-            $digestOutput = docker inspect --format='{{index .RepoDigests 0}}' $fullImageRef | ForEach-Object {
+          # Iterate over each generated image and get its digest based on the fully qualified image name with tag
+          foreach ($item in $msBuildOutput.Items.GeneratedImages) {
+            $fullyQualifiedImageWithTag = $item.FullyQualifiedImageWithTag
+            docker pull $fullyQualifiedImageWithTag
+            $digestOutput = docker inspect --format='{{index .RepoDigests 0}}' $fullyQualifiedImageWithTag | ForEach-Object {
               if ($_ -match '@(sha256:[a-f0-9]{64})$') {
                 return $Matches[1]
               } else {
@@ -400,23 +362,23 @@ jobs:
           }
 
           # Deduplicate while preserving order
-          $uniq = New-Object System.Collections.Generic.List[string]
-          $seen = [System.Collections.Generic.HashSet[string]]::new()
-          foreach ($d in $digests) {
-            if ([string]::IsNullOrWhiteSpace($d)) {
+          $uniqueDigests = New-Object System.Collections.Generic.List[string]
+          $seenDigests = [System.Collections.Generic.HashSet[string]]::new()
+          foreach ($digest in $digests) {
+            if ([string]::IsNullOrWhiteSpace($digest)) {
               continue
             }
 
-            if (-not $seen.Contains($d)) {
-              $null = $seen.Add($d)
-              $uniq.Add($d)
+            if (-not $seenDigests.Contains($digest)) {
+              $null = $seenDigests.Add($digest)
+              $uniqueDigests.Add($digest)
             }
           }
 
-          if ($uniq.Count -eq 0) {
+          if ($uniqueDigests.Count -eq 0) {
             $json = '[]'
           } else {
-            $json = ($uniq | ConvertTo-Json -Compress)
+            $json = ($uniqueDigests | ConvertTo-Json -Compress)
           }
 
           Write-Output "digests=$json" >> $env:GITHUB_OUTPUT
