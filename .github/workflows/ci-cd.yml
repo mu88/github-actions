@@ -359,6 +359,7 @@ jobs:
           # Iterate over each generated image and get its digest based on the fully qualified image name with tag
           foreach ($item in $msBuildOutput.Items.GeneratedImages) {
             $fullyQualifiedImageWithTag = $item.FullyQualifiedImageWithTag
+            Write-Host "Processing image: $fullyQualifiedImageWithTag"
             docker pull $fullyQualifiedImageWithTag
             $digestOutput = docker inspect --format='{{index .RepoDigests 0}}' $fullyQualifiedImageWithTag | ForEach-Object {
               if ($_ -match '@(sha256:[a-f0-9]{64})$') {
