@@ -305,13 +305,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine Docker image name
-        id: determine-image-name
-        shell: pwsh
-        run: |
-          $imageName = dotnet msbuild "${{ inputs.docker-publish-project }}" -getProperty:ContainerRepository
-          Write-Output "image_name=$imageName" >> $env:GITHUB_OUTPUT
-
       - name: Restore NuGet dependencies
         run: dotnet restore
 
@@ -327,20 +320,32 @@ jobs:
           }
           Write-Output "description=$repoDescription" >> $env:GITHUB_OUTPUT
 
+      - name: Determine Docker image name
+        id: determine-image-name
+        shell: pwsh
+        run: |
+          $imageName = dotnet msbuild "${{ inputs.docker-publish-project }}" /t:PrecomputeFullyQualifiedImage `--getProperty:ComputedFullyQualifiedImage
+          Write-Host "Determined Docker image name: $imageName"
+          Write-Output "image_name=$imageName" >> $env:GITHUB_OUTPUT
+
       - name: Build and push Docker
         id: build-and-push-docker
         # Use an environment variable for the description to ensure proper escaping and handling of special characters, newlines, or quotes.
         # This avoids YAML and shell parsing issues that can occur with direct interpolation.
         env:
           REPO_DESCRIPTION: ${{ steps.get-repo-description.outputs.description }}
+        shell: pwsh
         run: |
-          dotnet publish ${{ inputs.docker-publish-project }} \
-            --no-restore \
-            /t:PublishContainersForMultipleFamilies \
-            -p:ReleaseVersion=${{ needs.determine-release-information.outputs.release_version }} \
-            -p:IsRelease=${{ needs.determine-release-information.outputs.is_release }} \
-            -p:ContainerDescription="$REPO_DESCRIPTION" \
+          dotnet publish ${{ inputs.docker-publish-project }} `
+            `--no-restore `
+            /t:PublishContainersForMultipleFamilies `
+            /p:ReleaseVersion=${{ needs.determine-release-information.outputs.release_version }} `
+            /p:IsRelease=${{ needs.determine-release-information.outputs.is_release }} `
+            /p:ContainerDescription="$REPO_DESCRIPTION" `
             --getItem:GeneratedImages >> ${{ runner.temp }}/GeneratedImages.json
+
+          $generatedImagesContent = Get-Content -Raw -Path "${{ runner.temp }}/GeneratedImages.json"
+          Write-Host "GeneratedImages.json content:`n$generatedImagesContent"
 
       - name: Extract generated Docker image digests
         if: inputs.docker-attest-provenance-and-sbom == true
@@ -357,10 +362,25 @@ jobs:
           $msBuildOutput = ConvertFrom-Json $raw
 
           # Iterate over each generated image and get its digest based on the fully qualified image name with tag
+
           foreach ($item in $msBuildOutput.Items.GeneratedImages) {
             $fullyQualifiedImageWithTag = $item.FullyQualifiedImageWithTag
             Write-Host "Processing image: $fullyQualifiedImageWithTag"
             docker pull $fullyQualifiedImageWithTag
+
+            # Check if the image is a multi-platform image
+            $manifestJson = docker manifest inspect $fullyQualifiedImageWithTag 2>$null | ConvertFrom-Json
+            if ($manifestJson -and $manifestJson.manifests) {
+              # Multi-platform image: iterate over each platform and get its digest
+              foreach ($platform in $manifestJson.manifests) {
+                $platformDigest = $platform.digest
+                if (-not [string]::IsNullOrWhiteSpace($platformDigest)) {
+                  Write-Host "Found platform digest: $platformDigest"
+                  $digests.Add($platformDigest.Trim())
+                }
+              }
+            }
+            
             $digestOutput = docker inspect --format='{{index .RepoDigests 0}}' $fullyQualifiedImageWithTag | ForEach-Object {
               if ($_ -match '@(sha256:[a-f0-9]{64})$') {
                 return $Matches[1]
@@ -421,13 +441,13 @@ jobs:
         uses: actions/attest-build-provenance@v3
         with:
           push-to-registry: true
-          subject-name: ghcr.io/${{ needs.docker.outputs.image_name }}
+          subject-name: ${{ needs.docker.outputs.image_name }}
           subject-digest: ${{ matrix.digest }}
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/${{ needs.docker.outputs.image_name }}@${{ matrix.digest }}
+          image: ${{ needs.docker.outputs.image_name }}@${{ matrix.digest }}
           output-file: sbom.json
 
       - name: Attest SBOM
@@ -435,5 +455,5 @@ jobs:
         with:
           push-to-registry: true
           sbom-path: sbom.json
-          subject-name: ghcr.io/${{ needs.docker.outputs.image_name }}
+          subject-name: ${{ needs.docker.outputs.image_name }}
           subject-digest: ${{ matrix.digest }}
