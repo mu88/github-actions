@@ -341,11 +341,17 @@ jobs:
             /t:PublishContainersForMultipleFamilies `
             /p:ReleaseVersion=${{ needs.determine-release-information.outputs.release_version }} `
             /p:IsRelease=${{ needs.determine-release-information.outputs.is_release }} `
-            /p:ContainerDescription="$REPO_DESCRIPTION" `
+            /p:ContainerDescription="$env:REPO_DESCRIPTION" `
+            -bl:${{ runner.temp }}/dotnet-container-publish.binlog `
             --getItem:GeneratedImages >> ${{ runner.temp }}/GeneratedImages.json
 
           $generatedImagesContent = Get-Content -Raw -Path "${{ runner.temp }}/GeneratedImages.json"
           Write-Host "GeneratedImages.json content:`n$generatedImagesContent"
+
+      - name: Upload MSBuild binlog
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ runner.temp }}/*.binlog
 
       - name: Extract generated Docker image digests
         if: inputs.docker-attest-provenance-and-sbom == true
