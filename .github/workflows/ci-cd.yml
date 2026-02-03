@@ -145,6 +145,7 @@ jobs:
         uses: dorny/test-reporter@v2
         if: ${{ !cancelled() }} 
         with:
+          fail-on-empty: false
           name: dotnet unit and integration tests
           path: '**/*.trx'
           reporter: dotnet-trx
@@ -185,6 +186,7 @@ jobs:
         uses: dorny/test-reporter@v2
         if: ${{ !cancelled() }} 
         with:
+          fail-on-empty: false
           name: dotnet performance tests
           path: '**/*.trx'
           reporter: dotnet-trx
@@ -225,6 +227,7 @@ jobs:
         uses: dorny/test-reporter@v2
         if: ${{ !cancelled() }} 
         with:
+          fail-on-empty: false
           name: dotnet system tests
           path: '**/*.trx'
           reporter: dotnet-trx
