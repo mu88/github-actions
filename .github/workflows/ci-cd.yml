@@ -408,6 +408,8 @@ jobs:
           $repoDescription = gh repo view "${{ github.repository }}" --json description -q ".description"
           if ([string]::IsNullOrWhiteSpace($repoDescription) -or "$repoDescription" -eq 'null') {
             $repoDescription = 'No description configured for repository ${{ github.repository }}.'
+          } else {
+            $repoDescription = $repoDescription -replace ',', '%2C'
           }
           Write-Output "description=$repoDescription" >> $env:GITHUB_OUTPUT
 
