@@ -44,10 +44,19 @@ on:
     outputs:
       is_release:
         description: 'Whether this is a release (i.e. a Git commit starting with "chore(release)") or not'
-        value: ${{ jobs.determine-release-information.outputs.is_release }}
+        value: ${{ jobs.determine_release_information.outputs.is_release }}
+      pre_release_version:
+        description: 'The pre-release version (if not a release)'
+        value: ${{ jobs.determine_release_information.outputs.pre_release_version }}
+      release_notes:
+        description: 'The release notes (if a release)'
+        value: ${{ jobs.determine_release_information.outputs.release_notes }}
       release_version:
-        description: 'The release version'
-        value: ${{ jobs.determine-release-information.outputs.release_version }}
+        description: 'The release version (if a release)'
+        value: ${{ jobs.determine_release_information.outputs.release_version }}
+      version:
+        description: 'The version (release or pre-release)'
+        value: ${{ jobs.determine_release_information.outputs.version }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -83,7 +92,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
-          cache-dependency-path: "**/packages.lock.json"
+          cache-dependency-path: '**/packages.lock.json'
           global-json-file: global.json
 
       - name: Set up JDK
@@ -162,7 +171,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
-          cache-dependency-path: "**/packages.lock.json"
+          cache-dependency-path: '**/packages.lock.json'
           global-json-file: global.json
 
       - name: Login to Container registry
@@ -203,7 +212,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
-          cache-dependency-path: "**/packages.lock.json"
+          cache-dependency-path: '**/packages.lock.json'
           global-json-file: global.json
 
       - name: Login to Container registry
@@ -232,16 +241,32 @@ jobs:
           path: '**/*.trx'
           reporter: dotnet-trx
 
-  determine-release-information:
+  determine_release_information:
     name: 'Determine release information'
     runs-on: ubuntu-latest
     
     outputs:
       is_release: ${{ steps.determine-release-information.outputs.is_release }}
+      pre_release_version: ${{ steps.bump-prerelease-version.outputs.pre_release_version }}
+      release_notes: ${{ steps.changelog.outputs.release_notes }}
       release_version: ${{ steps.determine-release-information.outputs.release_version }}
+      version: ${{ steps.determine-version.outputs.version }}
     
     steps:
-      - name: Determine release information
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # otherwise Versionize cannot read the Git history and the pre-release version cannot be bumped
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore .NET tools
+        run: dotnet tool restore
+
+      - name: Determine between release and non-release
         id: determine-release-information
         shell: pwsh
         run: |
@@ -249,13 +274,13 @@ jobs:
           $defaultBranch = "${{ github.event.repository.default_branch }}"
           $refName = "${{ github.ref_name }}"
 
-          $regex = '^chore\(release\):\s*(.*)'
+          $regex = '^chore\(release\):\s*(\S*)'
           $isRelease = $false
           $version = 'dev'
 
           if ($commitMsg -match $regex) {
             if ($refName -ne $defaultBranch) {
-              Write-Host "Releases must be created on the default branch only."
+              Write-Host 'Releases must be created on the default branch only.'
               exit 1
             }
             $version = $Matches[1]
@@ -266,6 +291,69 @@ jobs:
           Write-Output "release_version=$version" >> $env:GITHUB_OUTPUT
           Write-Output "is_release=$isRelease" >> $env:GITHUB_OUTPUT
 
+      - name: Determine release notes
+        id: changelog
+        shell: pwsh
+        run: |
+          if (${{ steps.determine-release-information.outputs.is_release }} -ne 'true') {
+            Write-Output 'release_notes=' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          # Generate release notes (non-fatal) and save to runner temp
+          $releaseNotesFile = Join-Path $env:RUNNER_TEMP 'release_notes.md'
+          & dotnet tool run versionize changelog -v ${{ steps.determine-release-information.outputs.release_version }} > $releaseNotesFile
+          $release_notes = Get-Content -Path $releaseNotesFile -Raw
+          Write-Host 'Determined release notes:'
+          Write-Host $release_notes
+
+          if ([string]::IsNullOrWhiteSpace($release_notes)) {
+            Write-Error 'No release notes determined, something went wrong.'
+            exit 1
+          }
+
+          # Use GitHub Actions multiline output syntax to safely pass release notes
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'release_notes<<EOF'
+          Get-Content -Path $releaseNotesFile | ForEach-Object { Add-Content -Path $env:GITHUB_OUTPUT -Value $_ }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'EOF'
+
+      - name: Bump pre-release version
+        id: bump-prerelease-version
+        shell: pwsh
+        run: |
+          if ("${{ steps.determine-release-information.outputs.is_release }}" -eq 'true') {
+            Write-Host 'This is a release, skipping pre-release version bump.'
+            Write-Output 'pre_release_version=' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          # Although no commit or tag is made, we still need to set the git user to avoid Versionize errors
+          git config --global user.name 'John Doe'
+          git config --global user.email 'johndoe@example.com'
+
+          dotnet tool run versionize `
+            --pre-release "alpha-${{ github.run_number }}-${{ github.run_attempt }}" `
+            --skip-commit `
+            --skip-tag `
+            --find-release-commit-via-message
+
+          [xml]$projectFile = Get-Content -Path 'Directory.Build.props'
+          $version = $projectFile.Project.PropertyGroup.Version
+          Write-Host "Read version $version from Directory.Build.props"
+          Write-Output "pre_release_version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Determine version (release or non-release)
+        id: determine-version
+        shell: pwsh
+        run: |
+          if ("${{ steps.determine-release-information.outputs.is_release }}" -eq 'true') {
+            Write-Host "Release version is already set to ${{ steps.determine-release-information.outputs.release_version }}"
+            Write-Output "version=${{ steps.determine-release-information.outputs.release_version }}" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "Using pre-release version ${{ steps.bump-prerelease-version.outputs.pre_release_version }}"
+            Write-Output "version=${{ steps.bump-prerelease-version.outputs.pre_release_version }}" >> $env:GITHUB_OUTPUT
+          }      
+
   docker:
     name: 'Build and push Docker images'
     runs-on: ubuntu-latest
@@ -273,7 +361,7 @@ jobs:
 
     needs:
       - determine_docker_publish_needed
-      - determine-release-information
+      - determine_release_information
 
     outputs:
       digests: ${{ steps.extract-digests.outputs.digests }}
@@ -287,7 +375,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           cache: ${{ inputs.dotnet-cache-dependencies-via-lock-file }}
-          cache-dependency-path: "**/packages.lock.json"
+          cache-dependency-path: '**/packages.lock.json'
           global-json-file: global.json
 
       - name: Set up Docker
@@ -318,8 +406,8 @@ jobs:
         shell: pwsh
         run: |
           $repoDescription = gh repo view "${{ github.repository }}" --json description -q ".description"
-          if ([string]::IsNullOrWhiteSpace($repoDescription) -or $repoDescription -eq "null") {
-            $repoDescription = "No description configured for repository ${{ github.repository }}."
+          if ([string]::IsNullOrWhiteSpace($repoDescription) -or $repoDescription -eq 'null') {
+            $repoDescription = 'No description configured for repository ${{ github.repository }}.'
           }
           Write-Output "description=$repoDescription" >> $env:GITHUB_OUTPUT
 
@@ -342,8 +430,8 @@ jobs:
           dotnet publish ${{ inputs.docker-publish-project }} `
             `--no-restore `
             /t:PublishContainersForMultipleFamilies `
-            /p:ReleaseVersion=${{ needs.determine-release-information.outputs.release_version }} `
-            /p:IsRelease=${{ needs.determine-release-information.outputs.is_release }} `
+            /p:ReleaseVersion=${{ needs.determine_release_information.outputs.release_version }} `
+            /p:IsRelease=${{ needs.determine_release_information.outputs.is_release }} `
             /p:ContainerDescription="$env:REPO_DESCRIPTION" `
             --getItem:GeneratedImages >> ${{ runner.temp }}/GeneratedImages.json
 
@@ -425,7 +513,7 @@ jobs:
 
     needs:
       - determine_docker_publish_needed
-      - determine-release-information
+      - determine_release_information
       - docker
 
     strategy:
