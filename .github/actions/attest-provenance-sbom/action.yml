@@ -35,5 +35,5 @@ runs:
       uses: actions/attest-sbom@v3
       if: ${{ inputs.is-release == 'true' }}
       with:
-        sbom-path: ${{ inputs.sbom-path }}
+        sbom-path: ${{ inputs.sbom-file }}
         subject-path: ${{ inputs.subject-path }}
