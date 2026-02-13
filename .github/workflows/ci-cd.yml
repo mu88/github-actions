@@ -270,7 +270,7 @@ jobs:
         id: determine-release-information
         shell: pwsh
         run: |
-          $commitMsg = "${{ github.event.head_commit.message }}"
+          $commitMsg = '${{ github.event.head_commit.message }}'
           $defaultBranch = "${{ github.event.repository.default_branch }}"
           $refName = "${{ github.ref_name }}"
 
